@@ -1,0 +1,96 @@
+(
+sec = t / 44100,
+stage = ((sec / 10) | 0) % 20,
+loopNum = (sec / 200) | 0,
+
+introFade = min(1, max(0.05, (sec % 200) / 20)),
+outroFade = min(1, max(0, (600 - sec) / 10)),
+buildRamp = (stage == 2) * ((sec % 10) / 10),
+
+stepTime = 2876.087,
+rawBeat = t / stepTime,
+swing = ((rawBeat | 0) & 1) * 0.14,
+beat = rawBeat - swing,
+step = beat | 0,
+env = 1 - (beat % 1),
+
+cIdx = ((step >> 3) + stage) & 3,
+n0 = (cIdx == 0) * 110 + (cIdx == 1) * 87.31 + (cIdx == 2) * 98 + (cIdx == 3) * 82.41,
+n1 = (cIdx == 0) * 130.81 + (cIdx == 1) * 130.81 + (cIdx == 2) * 116.54 + (cIdx == 3) * 123.47,
+n2 = (cIdx == 0) * 164.81 + (cIdx == 1) * 164.81 + (cIdx == 2) * 146.83 + (cIdx == 3) * 146.83,
+n3 = (cIdx == 0) * 196 + (cIdx == 1) * 196 + (cIdx == 2) * 174.61 + (cIdx == 3) * 196,
+
+isIntro = (stage == 0) + (stage == 1),
+isBreak = (stage == 8) + (stage == 9),
+isOutro = (stage == 19),
+isBuild = (stage == 2) + (stage == 7) + (stage == 15),
+isClimax = (stage >= 15) * (stage <= 18),
+drumsOn = 1 - (isIntro + isBreak + isOutro),
+
+padVol = (0.45 + 0.75 * (isIntro + isBreak + isOutro)) * introFade,
+padEnv = min(1, ((beat % 8) * 0.5)) * (1 - max(0, ((beat % 8) - 6.5) * 0.6)),
+
+padL = ((((t * n0 * 0.000142) % 1 - 0.5) * 1.2) + (((t * n1 * 0.000142) % 1 - 0.5) * 0.8) + (((t * n2 * 0.000142) % 1 - 0.5) * 1.2) + (((t * n3 * 0.000142) % 1 - 0.5) * 0.8)) * 0.20 * padEnv * padVol,
+padR = ((((t * n0 * 0.000142) % 1 - 0.5) * 0.8) + (((t * n1 * 0.000142) % 1 - 0.5) * 1.2) + (((t * n2 * 0.000142) % 1 - 0.5) * 0.8) + (((t * n3 * 0.000142) % 1 - 0.5) * 1.2)) * 0.20 * padEnv * padVol,
+
+barPos = step & 15,
+leadMask = 19627,
+leadTrigger = (leadMask >> barPos) & 1,
+leadHold = ((step & 3) == 1) + ((step & 7) == 6),
+notePick = (((step >> 1) + (barPos == 3) + (barPos == 11) + stage + loopNum) & 3),
+baseLead = (notePick == 0) * n0 + (notePick == 1) * n1 + (notePick == 2) * n2 + (notePick == 3) * n3,
+leadNote = baseLead * (2 + 2 * isClimax),
+leadEnv = leadTrigger * (leadHold * (1 - (beat % 1) * 0.35) + (1 - leadHold) * pow(env, 1.4)),
+
+leadOn = (stage >= 1) * (1 - isBreak) * (1 - isOutro),
+lead = leadOn * introFade * ((sin(t * leadNote * 0.000142) * 0.6 + (((t * leadNote * 0.000142) % 1) - 0.5) * 0.4) * 0.38 * leadEnv),
+
+effStep = step >> (stage == 14),
+ePos = effStep & 15,
+patVar = (stage + (effStep >> 4)) & 3,
+
+kickMask = (patVar == 0) * 17477 + (patVar == 1) * 21609 + (patVar == 2) * 9381 + (patVar == 3) * 26761,
+kickHit = (1 - isBuild) * ((kickMask >> ePos) & 1),
+kick = drumsOn * kickHit * sin(sqrt((beat % 1) * stepTime) * 0.55) * pow(env, 1.8) * 1.2,
+
+bassOn = (stage >= 3) * (1 - isBreak) * (1 - isOutro),
+bassMask = 21675,
+bassHit = (bassMask >> ePos) & 1,
+bassOct = 1 + ((ePos == 3) + (ePos == 11) + (ePos == 14)) * 0.5,
+bassEnv = bassHit * (0.4 + 0.6 * env),
+subBass = bassOn * sin(t * n0 * 0.5 * bassOct * 0.000142) * 0.65 * bassEnv,
+
+snareMask = (patVar == 0) * 18704 + (patVar == 1) * 22800 + (patVar == 2) * 19232 + (patVar == 3) * 26896,
+ghostMask = 10826,
+isMainSnare = (snareMask >> ePos) & 1,
+isGhostSnare = ((ghostMask >> ePos) & 1) * (1 - isMainSnare),
+
+isStutter = (ePos >= 12) * (((stage + (effStep >> 4)) & 1) == 1),
+drillDiv = isBuild * 719.02 + (1 - isBuild) * (isStutter * (719.02 + 719.02 * (ePos & 1)) + (1 - isStutter) * stepTime),
+snareEnv = 1 - ((t / drillDiv) % 1),
+
+drumDynamics = (stage == 2) * (0.25 + 0.75 * buildRamp) + (stage != 2),
+snarePitch = 0.9 + (0.6 * buildRamp) + (isGhostSnare * 0.4),
+snareGain = isBuild * 0.85 + (1 - isBuild) * (isMainSnare * 1.05 + isGhostSnare * 0.38 + isStutter * 0.80),
+
+noiseL = sin(t * 12.9898) * 43758.5453 % 2 - 1,
+noiseR = sin(t * 78.233) * 43758.5453 % 2 - 1,
+snareBody = sin(t * snarePitch) * 0.35,
+snareL = drumsOn * drumDynamics * (snareGain > 0) * (snareBody + noiseL * 0.55) * pow(snareEnv, 1.5) * snareGain,
+snareR = drumsOn * drumDynamics * (snareGain > 0) * (snareBody + noiseR * 0.55) * pow(snareEnv, 1.5) * snareGain,
+
+hatMask = 43690,
+isOpenHat = (ePos == 6) + (ePos == 14),
+hatHit = ((hatMask >> ePos) & 1) + isOpenHat,
+hatEnv = pow(env, isOpenHat * 1.2 + (1 - isOpenHat) * 4.5),
+hatGain = 0.16 + isOpenHat * 0.18,
+hatL = drumsOn * drumDynamics * (hatHit > 0) * noiseL * hatGain * hatEnv,
+hatR = drumsOn * drumDynamics * (hatHit > 0) * noiseR * hatGain * hatEnv,
+
+outL = (padL + (lead * 0.85) + subBass + kick + snareL + hatL) * outroFade,
+outR = (padR + (lead * 1.15) + subBass + kick + snareR + hatR) * outroFade,
+
+[tanh(outL * 2.2), tanh(outR * 2.2)]
+)
+
+
